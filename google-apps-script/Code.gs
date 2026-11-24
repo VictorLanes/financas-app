@@ -170,7 +170,7 @@ function writeReadable(ss, d) {
     txs.map(function (t) {
       var catName = t.kind === 'invoice' ? 'Pagamento de fatura' : t.kind === 'goal' ? 'Metas / ajuste' : (cat[t.catId] || {}).name || '';
       var sit = t.type === 'transfer' ? '' : t.cardId && t.kind !== 'invoice' ? 'No cartão' : t.paid ? (t.type === 'income' ? 'Recebido' : 'Pago') : 'Pendente';
-      var conta = t.type === 'transfer' ? ((acc[t.accountId] || {}).name || '') + ' → ' + ((acc[t.toAccountId] || {}).name || '') : (acc[t.accountId] || {}).name || '';
+      var conta = t.wallet ? (t.wallet === 'va' ? 'Vale Alimentação' : 'Vale Refeição') : t.type === 'transfer' ? ((acc[t.accountId] || {}).name || '') + ' → ' + ((acc[t.toAccountId] || {}).name || '') : (acc[t.accountId] || {}).name || '';
       return [toDate(t.date), tipo[t.type] || t.type, t.desc || '', catName, conta, t.cardId ? (card[t.cardId] || {}).name || '' : '',
         t.type === 'expense' ? -t.amount : t.amount, sit, t.inst ? t.inst.n + '/' + t.inst.total : '', t.notes || ''];
     }), ['date', null, null, null, null, null, 'money']);

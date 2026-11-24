@@ -163,7 +163,7 @@ class DB {
     const a = this.acc(id);
     let b = Number(a?.initial) || 0;
     for (const t of this.d.txs) {
-      if (!t.paid || t.cardId && t.kind !== 'invoice') continue;
+      if (t.wallet || !t.paid || t.cardId && t.kind !== 'invoice') continue;
       const d = t.paidDate || t.date;
       if (upTo && d > upTo) continue;
       if (t.type === 'income' && t.accountId === id) b += t.amount;
@@ -191,7 +191,8 @@ class DB {
   }
   monthTxs(k) {
     const [a, b] = monthDays(k);
-    return this.d.txs.filter((t) => t.date >= a && t.date <= b);
+    // lançamentos do vale refeição/alimentação ficam separados (não entram em saldo, receitas e despesas)
+    return this.d.txs.filter((t) => !t.wallet && t.date >= a && t.date <= b);
   }
   monthStats(k) {
     const list = this.monthTxs(k).filter((t) => this.isStat(t));
@@ -261,7 +262,7 @@ class DB {
   dues({ until = null, from = null } = {}) {
     const out = [];
     for (const t of this.d.txs) {
-      if (t.paid || t.cardId || t.type === 'transfer') continue;
+      if (t.wallet || t.paid || t.cardId || t.type === 'transfer') continue;
       out.push({ key: 'tx:' + t.id, kind: t.type === 'income' ? 'receber' : 'pagar', dir: t.type === 'income' ? 'in' : 'out', title: t.desc || this.cat(t.catId)?.name || 'Lançamento', amount: t.amount, due: t.date, ref: t.id, icon: this.cat(t.catId)?.icon || '🧾', sub: this.cat(t.catId)?.name || '' });
     }
     for (const c of this.d.cards) {
@@ -576,6 +577,30 @@ class DB {
     this.d.txs = this.d.txs.filter((t) => !ids.has(t.id));
     this.d.goals = this.d.goals.filter((x) => x.id !== id);
     this.commit();
+  }
+
+  // ---------------- vale refeição / alimentação ----------------
+  /** wallet: 'vr' (refeição) ou 'va' (alimentação). Créditos = type income, gastos = type expense. */
+  valeTxs(wallet, k = null) {
+    return this.d.txs.filter((t) => t.wallet === wallet && (!k || t.date.slice(0, 7) === k))
+      .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  }
+  /** saldo do vale: créditos já recebidos (até hoje) menos todos os gastos */
+  valeBalance(wallet, upTo = today()) {
+    let b = 0;
+    for (const t of this.d.txs) {
+      if (t.wallet !== wallet || t.date > upTo) continue;
+      b += t.type === 'income' ? t.amount : -t.amount;
+    }
+    return r2(b);
+  }
+  valeMonth(wallet, k) {
+    const list = this.valeTxs(wallet, k);
+    const sum = (l) => r2(l.reduce((s, t) => s + t.amount, 0));
+    return { list, received: sum(list.filter((t) => t.type === 'income')), spent: sum(list.filter((t) => t.type === 'expense')) };
+  }
+  hasVale() {
+    return this.d.txs.some((t) => t.wallet);
   }
 
   // ---------------- gráficos ----------------

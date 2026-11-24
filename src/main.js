@@ -7,13 +7,14 @@ import {
   esc, brl, money, setHidden, isHidden, today, ym, brDate, brShort, monthLabel, shiftMonth, dueLabel, addDays, daysBetween, r2, pct,
 } from './fmt.js';
 import { donut, bars, progress } from './charts.js';
-import { txForm, payDialog, cardForm, debtForm, accountForm, categoryForm, goalForm, goalMoveForm, budgetForm } from './forms.js';
+import { txForm, payDialog, cardForm, debtForm, accountForm, categoryForm, goalForm, goalMoveForm, budgetForm, valeForm, VALES, excluirLancamento } from './forms.js';
+import { analyze, chartAcumulado } from './analysis.js';
 import { exportReport, saveFile } from './report.js';
 import { configured, syncNow, scheduleSync, status as syncStatus, onStatus, testConnection, configCode, parseConfigCode, randomKey } from './sync.js';
 import { native, initNative, afterChange, notifStatus, askNotif, testNotif, exactAlarmSettings, setupPin, checkLock, lockNow } from './native.js';
 
 const $app = document.getElementById('app');
-const st = { tab: 'home', month: ym(today()), txFilter: 'all', txQ: '', dueSide: 'pagar' };
+const st = { tab: 'home', month: ym(today()), txFilter: 'all', txQ: '', dueSide: 'pagar', vale: 'vr' };
 
 // ======================================================================
 // Render
@@ -48,12 +49,12 @@ const eyeBtn = () => `<button class="icon-btn" data-act="eye" aria-label="Oculta
 function txRow(t) {
   const c = db.cat(t.catId);
   const isT = t.type === 'transfer';
-  const ic = isT ? '🔁' : t.kind === 'invoice' ? '💳' : t.kind === 'goal' ? (t.goalId ? '🎯' : '⚖️') : c?.icon || '❔';
+  const ic = t.wallet && t.type === 'income' ? '💳' : isT ? '🔁' : t.kind === 'invoice' ? '💳' : t.kind === 'goal' ? (t.goalId ? '🎯' : '⚖️') : c?.icon || '❔';
   const color = isT ? '#64748b' : t.kind === 'invoice' ? '#7c3aed' : c?.color || '#94a3b8';
-  const where = t.cardId && t.kind !== 'invoice' ? `💳 ${db.card(t.cardId)?.name || ''}` : isT ? `${db.acc(t.accountId)?.name} → ${db.acc(t.toAccountId)?.name}` : db.acc(t.accountId)?.name || '';
+  const where = t.wallet ? `${VALES[t.wallet]?.icon || ''} ${VALES[t.wallet]?.nome || 'Vale'}` : t.cardId && t.kind !== 'invoice' ? `💳 ${db.card(t.cardId)?.name || ''}` : isT ? `${db.acc(t.accountId)?.name} → ${db.acc(t.toAccountId)?.name}` : db.acc(t.accountId)?.name || '';
   const title = t.desc || (isT ? 'Transferência' : c?.name || 'Lançamento');
   const sign = t.type === 'income' ? '+' : isT ? '' : '−';
-  const pend = !t.paid && !t.cardId && !isT;
+  const pend = !t.paid && !t.cardId && !isT && !t.wallet;
   return `<button class="tx-row" data-tx="${t.id}">
     <span class="tx-ic" style="--c:${color}">${ic}</span>
     <span class="grow tx-main"><b>${esc(title)}</b>
@@ -152,6 +153,38 @@ async function copyText(text, okMsg) {
 }
 
 // ---------------------------- Início ----------------------------------
+/** Receitas / Despesas / Resultado — tocar em Receitas ou Despesas abre a lista */
+function kpisMes(m) {
+  return `<div class="kpis">
+    <button class="kpi tap" data-act="list-type" data-v="income"><small>Receitas ›</small><b class="income">${money(m.income)}</b></button>
+    <button class="kpi tap" data-act="list-type" data-v="expense"><small>Despesas ›</small><b class="expense">${money(m.expense)}</b></button>
+    <button class="kpi tap" data-act="analise"><small>Resultado ›</small><b class="${m.balance >= 0 ? 'income' : 'expense'}">${money(m.balance)}</b></button>
+  </div>`;
+}
+
+function analiseMini() {
+  const a = analyze(ym(today()));
+  const al = a.alertas.find((x) => x.t === 'ruim') || a.alertas[0];
+  return `<button class="card-box analise-mini" data-act="analise">
+    <h3>📈 Análise do mês <span class="link small">ver tudo ›</span></h3>
+    <div class="an-grid">
+      <div><small class="muted">Pode gastar hoje</small><b class="${a.porDia < 0 ? 'expense' : 'income'}">${a.porDia < 0 ? money(0) : money(a.porDia)}</b><small class="muted">por dia até o fim do mês</small></div>
+      <div><small class="muted">Despesas previstas</small><b>${money(a.projecaoDespesas)}</b><small class="muted">média ${money(a.mediaDia)}/dia</small></div>
+      <div><small class="muted">Fim do mês</small><b class="${a.projecaoResultado >= 0 ? 'income' : 'expense'}">${money(a.projecaoResultado)}</b><small class="muted">${a.projecaoResultado >= 0 ? 'sobra prevista' : 'falta prevista'}</small></div>
+    </div>
+    ${al ? `<p class="an-alert ${al.t}">${al.t === 'ruim' ? '⚠️' : al.t === 'bom' ? '✅' : '💡'} ${esc(al.m)}</p>` : ''}
+  </button>`;
+}
+
+function valeMini() {
+  if (!db.hasVale()) return '';
+  const ws = ['vr', 'va'].filter((w) => db.valeTxs(w).length);
+  return `<button class="card-box vale-mini" data-act="open" data-v="vale">
+    <h3>Vale refeição / alimentação <span class="link small">abrir ›</span></h3>
+    <div class="row wrap">${ws.map((w) => `<span class="vale-chip">${VALES[w].icon} ${VALES[w].nome} <b>${money(db.valeBalance(w))}</b></span>`).join('')}</div>
+  </button>`;
+}
+
 function viewHome() {
   const k = st.month;
   const m = db.monthStats(k);
@@ -172,11 +205,9 @@ function viewHome() {
   </div>
   ${late.length ? `<button class="alert" data-act="go-dues">⚠️ <span class="grow"><b>${late.length} conta${late.length > 1 ? 's' : ''} vencida${late.length > 1 ? 's' : ''}</b> · ${money(late.reduce((s, x) => s + x.amount, 0))}</span>${icon('back', 18, 'flip')}</button>` : ''}
   ${monthBar(k)}
-  <div class="kpis">
-    <div class="kpi"><small>Receitas</small><b class="income">${money(m.income)}</b></div>
-    <div class="kpi"><small>Despesas</small><b class="expense">${money(m.expense)}</b></div>
-    <div class="kpi"><small>Resultado</small><b class="${m.balance >= 0 ? 'income' : 'expense'}">${money(m.balance)}</b></div>
-  </div>
+  ${kpisMes(m)}
+  ${analiseMini()}
+  ${valeMini()}
   <section class="card-box"><h3>Próximos vencimentos <button class="link small" data-act="go-dues">ver tudo</button></h3>
     ${soon.length ? soon.slice(0, 5).map((d) => dueRow(d)).join('') : '<p class="muted small">Nada vencendo nos próximos 7 dias. 🎉</p>'}</section>
   <section class="card-box"><h3>Despesas por categoria</h3>${donut(byCat, m.expense, { center: money(m.expense) })}</section>
@@ -216,9 +247,7 @@ function viewTxs() {
   return `
   <header class="top"><h1>Lançamentos</h1><div class="row">${eyeBtn()}${reportBtn('txs')}</div></header>
   ${monthBar(st.month)}
-  <div class="kpis"><div class="kpi"><small>Receitas</small><b class="income">${money(m.income)}</b></div>
-    <div class="kpi"><small>Despesas</small><b class="expense">${money(m.expense)}</b></div>
-    <div class="kpi"><small>Resultado</small><b class="${m.balance >= 0 ? 'income' : 'expense'}">${money(m.balance)}</b></div></div>
+  ${kpisMes(m)}
   <div class="chips">${chip('all', 'Todos')}${chip('expense', 'Despesas')}${chip('income', 'Receitas')}${chip('pending', 'Pendentes')}${chip('card', 'Cartão')}</div>
   <input class="input search" id="txq" placeholder="Buscar..." value="${esc(st.txQ)}">
   <div class="tx-list">${rows || `<div class="empty">${icon('list', 40)}<p>Nenhum lançamento neste mês.</p><button class="btn primary" data-act="fab">Adicionar</button></div>`}</div>`;
@@ -308,7 +337,7 @@ function openCard(cardId, key) {
   el.addEventListener('click', async (e) => {
     if (e.target.closest('[data-x]')) return close();
     const tx = e.target.closest('[data-tx]');
-    if (tx) return txForm({}, tx.dataset.tx);
+    if (tx) return txDetail(tx.dataset.tx);
     const b = e.target.closest('[data-c]');
     if (!b) return;
     const keys = db.invoiceKeys(cardId);
@@ -337,6 +366,8 @@ function viewMore() {
   const owe = debts.filter((x) => x.kind === 'peguei').reduce((s, x) => s + db.debtSummary(x).remaining, 0);
   return `<header class="top"><h1>Mais</h1>${eyeBtn()}</header>
   <div class="menu">
+    ${item('analise', '📈', 'Análise do mês', 'Previsão, quanto gastar por dia e alertas')}
+    ${item('vale', '🍽️', 'Vale Refeição / Alimentação', db.hasVale() ? ['vr', 'va'].filter((w) => db.valeTxs(w).length).map((w) => `${VALES[w].nome.replace('Vale ', '')}: ${money(db.valeBalance(w))}`).join(' · ') : 'Saldo do mês e gastos do vale')}
     ${item('loans', '🤝', 'Empréstimos', debts.length ? `${debts.length} cadastrado(s) · devo ${money(owe)}` : 'O que você deve ou emprestou')}
     ${item('fin', '🏦', 'Financiamentos', fins.length ? `${fins.length} ativo(s)` : 'Carro, imóvel, parcelas e juros')}
     ${item('budgets', '📊', 'Orçamentos', 'Limite de gastos por categoria')}
@@ -571,6 +602,8 @@ function openReports() {
     ['budgets', '📈', 'Orçamentos', `Planejado x gasto em ${monthLabel(st.month)}`],
     ['goals', '🎯', 'Metas', 'Progresso e movimentações'],
     ['accounts', '🏦', 'Contas e saldos', 'Saldo de cada conta'],
+    ['analise', '📈', 'Análise do mês', `Previsão e indicadores de ${monthLabel(st.month)}`],
+    ['vale', '🍽️', 'Vale refeição / alimentação', `Créditos e gastos de ${monthLabel(st.month)}`],
   ];
   simplePanel('reports', 'Relatórios', () => `<p class="muted small">Escolha o relatório e o formato. O arquivo é salvo em <b>Documentos/MinhasFinancas</b> e você pode enviar por WhatsApp, e-mail ou Drive.</p>
     <p class="muted small">Mês selecionado: <b>${monthLabel(st.month)}</b> (mude na aba Início ou Lançamentos).</p>
@@ -673,6 +706,232 @@ async function openSettings() {
 }
 
 // ======================================================================
+// Detalhes de um lançamento (lápis = editar, X vermelho = excluir)
+// ======================================================================
+function txDetail(id) {
+  const tipoNome = (t) => (t.wallet ? (t.type === 'income' ? 'Crédito no vale' : 'Gasto no vale') : t.type === 'transfer' ? 'Transferência' : t.kind === 'invoice' ? 'Pagamento de fatura' : t.type === 'income' ? 'Receita' : 'Despesa');
+  const { close } = simplePanel('tx-detail', 'Detalhes', () => {
+    const t = db.tx(id);
+    if (!t) {
+      setTimeout(() => close(), 0);
+      return '';
+    }
+    const c = db.cat(t.catId);
+    const isT = t.type === 'transfer';
+    const sign = t.type === 'income' ? '+ ' : isT ? '' : '− ';
+    const situacao = t.wallet ? (t.type === 'income' ? (t.date > today() ? 'Crédito programado' : 'Creditado') : 'Pago com o vale')
+      : isT ? 'Transferido' : t.cardId && t.kind !== 'invoice' ? `No cartão · fatura de ${monthLabel(t.invoice)}`
+      : t.paid ? `${t.type === 'income' ? 'Recebido' : 'Pago'} em ${brDate(t.paidDate || t.date)}` : t.type === 'income' ? 'A receber' : 'Pendente';
+    const onde = t.wallet ? `${VALES[t.wallet].icon} ${VALES[t.wallet].nome}`
+      : isT ? `${db.acc(t.accountId)?.name || ''} → ${db.acc(t.toAccountId)?.name || ''}`
+      : t.cardId && t.kind !== 'invoice' ? `💳 ${db.card(t.cardId)?.name || ''}` : `${db.acc(t.accountId)?.icon || '🏦'} ${db.acc(t.accountId)?.name || '—'}`;
+    const linha = (rot, val) => (val ? `<div class="det-row"><span class="muted">${rot}</span><b>${val}</b></div>` : '');
+    const pend = !t.paid && !t.cardId && !isT && !t.wallet;
+    return `<div class="det-hero">
+        <span class="det-ic" style="--c:${c?.color || '#94a3b8'}">${isT ? '🔁' : t.wallet && t.type === 'income' ? '💳' : c?.icon || '❔'}</span>
+        <b class="det-title">${esc(t.desc || c?.name || tipoNome(t))}</b>
+        <b class="det-val ${t.type}">${sign}${money(t.amount)}</b>
+        <span class="tag-pill ${pend ? 'late' : ''}">${esc(tipoNome(t))} · ${esc(situacao)}</span>
+      </div>
+      <div class="card-box det-list">
+        ${linha('Categoria', c ? `${c.icon} ${esc(c.name)}` : '')}
+        ${linha(t.type === 'income' ? 'Data' : t.paid || t.cardId || t.wallet ? 'Data' : 'Vencimento', `${brDate(t.date)} · ${['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'][new Date(t.date + 'T12:00').getDay()]}`)}
+        ${linha(isT ? 'Contas' : t.wallet ? 'Vale' : t.cardId ? 'Cartão' : t.type === 'income' ? 'Recebido em' : 'Pago com', esc(onde))}
+        ${linha('Parcela', t.inst ? `${t.inst.n} de ${t.inst.total}${t.inst.mode === 'fixo' ? ' (todo mês)' : ''}` : '')}
+        ${linha('Observação', esc(t.notes || ''))}
+        ${t.barcode ? `<div class="det-row"><span class="muted">Código de barras / PIX</span><button class="btn sm ghost" data-copy>${icon('copy', 16)} Copiar</button></div>` : ''}
+      </div>
+      ${pend ? `<button class="btn ${t.type === 'income' ? 'ok' : 'primary'} block" data-pagar>${icon('check', 18)} ${t.type === 'income' ? 'Marcar como recebido' : 'Marcar como pago'}</button>` : ''}
+      <div class="grid2 det-actions">
+        <button class="btn ghost" data-editar>${icon('edit', 18)} Editar</button>
+        <button class="btn danger-soft" data-excluir>${icon('close', 18)} Excluir</button>
+      </div>`;
+  }, {
+    headBtns: `<button class="icon-btn" data-editar aria-label="Editar">${icon('edit')}</button><button class="icon-btn del" data-excluir aria-label="Excluir">${icon('close')}</button>`,
+    onClick: async (e) => {
+      const t = db.tx(id);
+      if (!t) return;
+      if (e.target.closest('[data-editar]')) return t.wallet ? valeForm({}, id) : txForm({}, id);
+      if (e.target.closest('[data-excluir]')) {
+        if (await excluirLancamento(t)) close();
+        return;
+      }
+      if (e.target.closest('[data-pagar]')) {
+        const d = findDue('tx:' + id);
+        if (d) payDialog(d);
+      }
+      if (e.target.closest('[data-copy]')) {
+        try {
+          await navigator.clipboard.writeText(t.barcode);
+          toast('Código copiado ✓');
+        } catch {
+          dialog({ title: 'Código', message: t.barcode, cancel: null });
+        }
+      }
+    },
+  });
+}
+
+// ======================================================================
+// Lista só de despesas ou só de receitas
+// ======================================================================
+function openTxType(type) {
+  let k = st.month;
+  let cat = '';
+  const isExp = type === 'expense';
+  simplePanel('tx-type', isExp ? 'Despesas' : 'Receitas', () => {
+    const all = db.monthTxs(k).filter((t) => t.type === type && db.isStat(t));
+    const list = all.filter((t) => !cat || t.catId === cat).sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+    const total = all.reduce((s, t) => s + t.amount, 0);
+    const feito = all.filter((t) => t.paid || t.cardId).reduce((s, t) => s + t.amount, 0);
+    const cats = db.byCategory(all, type);
+    let last = '';
+    const rows = list.map((t) => {
+      const head = t.date !== last ? `<div class="day-head">${brDate(t.date)} · ${['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'][new Date(t.date + 'T12:00').getDay()]}</div>` : '';
+      last = t.date;
+      return head + txRow(t);
+    }).join('');
+    return `${monthBar(k)}
+      <div class="kpis">
+        <div class="kpi"><small>Total do mês</small><b class="${type}">${money(total)}</b></div>
+        <div class="kpi"><small>${isExp ? 'Pago' : 'Recebido'}</small><b>${money(feito)}</b></div>
+        <div class="kpi"><small>${isExp ? 'A pagar' : 'A receber'}</small><b>${money(total - feito)}</b></div>
+      </div>
+      ${cats.length > 1 ? `<div class="chips"><button class="chip ${!cat ? 'on' : ''}" data-fcat="">Todas</button>${cats.map((c) => `<button class="chip ${cat === c.id ? 'on' : ''}" data-fcat="${c.id}">${c.cat.icon} ${esc(c.cat.name)} · ${money(c.v)}</button>`).join('')}</div>` : ''}
+      <p class="muted small">Toque num item para ver os detalhes, editar (✏️) ou excluir (✖).</p>
+      <div class="tx-list">${rows || `<div class="empty">${isExp ? '💸' : '💰'}<p>Nenhuma ${isExp ? 'despesa' : 'receita'} em ${monthLabel(k)}.</p></div>`}</div>
+      <button class="btn primary block" data-new>${icon('plus', 18)} ${isExp ? 'Nova despesa' : 'Nova receita'}</button>`;
+  }, {
+    headBtns: `<button class="icon-btn" data-rep>${icon('pdf')}</button>`,
+    onClick: (e, draw) => {
+      const tx = e.target.closest('[data-tx]');
+      if (tx) return txDetail(tx.dataset.tx);
+      const fc = e.target.closest('[data-fcat]');
+      if (fc) { cat = fc.dataset.fcat; draw(); }
+      if (e.target.closest('[data-new]')) txForm({ type, date: k === ym(today()) ? today() : k + '-01' });
+      if (e.target.closest('[data-act="m-prev"]')) { k = shiftMonth(k, -1); cat = ''; draw(); }
+      if (e.target.closest('[data-act="m-next"]')) { k = shiftMonth(k, 1); cat = ''; draw(); }
+      if (e.target.closest('[data-act="m-today"]')) { k = ym(today()); cat = ''; draw(); }
+      if (e.target.closest('[data-rep]')) chooseFormat(() => specTipo(type, k));
+    },
+  });
+}
+
+// ======================================================================
+// Análise do mês
+// ======================================================================
+function openAnalysis() {
+  let k = st.month;
+  simplePanel('analysis', 'Análise do mês', () => {
+    const a = analyze(k);
+    const box = (rot, val, cls = '', sub = '') => `<div class="kpi"><small>${rot}</small><b class="${cls}">${val}</b>${sub ? `<small class="muted">${sub}</small>` : ''}</div>`;
+    const varTxt = a.varMes == null ? '—' : `${a.varMes > 0 ? '+' : ''}${Math.round(a.varMes * 100)}%`;
+    const maxWd = Math.max(1, ...a.porDiaSemana);
+    const WD = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    const hero = a.isCur
+      ? `<div class="hero-card an-hero ${a.porDia < 0 ? 'neg' : ''}"><span class="small">Você pode gastar por dia</span>
+          <b class="hero-val">${money(Math.max(0, a.porDia))}</b>
+          <span class="small">${a.porDia < 0 ? `As despesas já passam das receitas em ${money(-a.livre)}` : `até o fim de ${monthLabel(k).split(' ')[0].toLowerCase()} · ${a.diasParaGastar} dia(s) contando hoje · ${money(Math.max(0, a.porSemana))} por semana`}</span>
+          <span class="small">Hoje você gastou <b>${money(a.gastoHoje)}</b>${a.porDia > 0 ? ` · ${a.gastoHoje > a.porDia ? 'acima' : 'dentro'} do limite` : ''}</span></div>`
+      : `<div class="hero-card an-hero ${a.projecaoResultado < 0 ? 'neg' : ''}"><span class="small">${a.isPast ? 'Resultado do mês' : 'Previsão para o mês'}</span>
+          <b class="hero-val">${money(a.projecaoResultado)}</b><span class="small">${a.isPast ? 'receitas menos despesas' : `receitas lançadas menos despesas previstas (ritmo de ${money(a.mediaVar)}/dia)`}</span></div>`;
+    return `${monthBar(k)}${hero}
+      <div class="kpis two">
+        ${box(a.isPast ? 'Gasto no mês' : 'Gasto até hoje', money(a.ateHoje), 'expense', a.dayNow ? `${a.dayNow} de ${a.dim} dias` : '')}
+        ${box('Média por dia', money(a.mediaDia), '', `dia a dia: ${money(a.mediaVar)}`)}
+        ${box('Previsão de despesas', money(a.projecaoDespesas), 'expense', a.agendado ? `inclui ${money(a.agendado)} já agendado` : 'no ritmo atual')}
+        ${box('Previsão do resultado', money(a.projecaoResultado), a.projecaoResultado >= 0 ? 'income' : 'expense', `receitas ${money(a.receitas)}`)}
+        ${a.isCur ? box('Saldo previsto nas contas', money(a.saldoPrevisto), a.saldoPrevisto >= 0 ? 'income' : 'expense', 'no fim do mês') : ''}
+        ${box('Taxa de economia', a.taxaEconomia == null ? '—' : pct(a.taxaEconomia), a.taxaEconomia != null && a.taxaEconomia < 0 ? 'expense' : 'income', 'do que entrou no mês')}
+        ${box('Ainda a pagar no mês', money(a.aPagar), a.aPagar ? 'expense' : '', 'contas, faturas e parcelas')}
+        ${box('Ainda a receber', money(a.aReceber), 'income')}
+        ${box('Vs. mês passado', varTxt, a.varMes > 0 ? 'expense' : 'income', `mesmo período: ${money(a.pAte)}`)}
+        ${box('Média de gastos (3 meses)', money(a.media3), '', `receitas: ${money(a.mediaRec3)}`)}
+      </div>
+      <button class="card-box meta-row" data-meta><span class="grow"><b>🎯 Meta de economia mensal</b><span class="muted small">${a.meta ? `Guardar ${money(a.meta)} por mês — já descontado do limite diário` : 'Defina quanto quer guardar por mês para o limite diário considerar isso'}</span></span>${icon('edit', 18)}</button>
+      ${a.alertas.length ? `<section class="card-box"><h3>Alertas e dicas</h3>${a.alertas.map((x) => `<p class="an-alert ${x.t}">${x.t === 'ruim' ? '⚠️' : x.t === 'bom' ? '✅' : '💡'} ${esc(x.m)}</p>`).join('')}</section>` : ''}
+      <section class="card-box"><h3>Gasto acumulado no mês</h3>${chartAcumulado(a)}</section>
+      <section class="card-box"><h3>Onde o dinheiro foi</h3>${donut(a.cats, a.despesas, { center: money(a.despesas) })}
+        ${a.subiu.length ? `<p class="muted small" style="margin-top:10px">Subiram em relação ao mês passado:</p>${a.subiu.slice(0, 3).map((c) => `<div class="row small"><span class="grow">${c.cat.icon} ${esc(c.cat.name)}</span><span class="expense">+${money(c.dif)}</span></div>`).join('')}` : ''}</section>
+      ${a.maiores.length ? `<section class="card-box flush"><h3 class="pad-h">Maiores despesas</h3>${a.maiores.map(txRow).join('')}</section>` : ''}
+      ${a.diaTop >= 0 ? `<section class="card-box"><h3>Gastos do dia a dia por dia da semana</h3><div class="wd-bars">${a.porDiaSemana.map((v, i) => `<div class="wd"><i style="height:${Math.round((v / maxWd) * 100)}%" class="${i === a.diaTop ? 'top' : ''}"></i><span>${WD[i]}</span></div>`).join('')}</div></section>` : ''}
+      <p class="muted small center">A previsão usa os lançamentos do mês (inclusive contas futuras já cadastradas) mais a sua média diária de gastos do dia a dia. Parcelas e contas que se repetem não entram na média.</p>`;
+  }, {
+    headBtns: `<button class="icon-btn" data-rep>${icon('pdf')}</button>`,
+    onClick: async (e, draw) => {
+      const tx = e.target.closest('[data-tx]');
+      if (tx) return txDetail(tx.dataset.tx);
+      if (e.target.closest('[data-act="m-prev"]')) { k = shiftMonth(k, -1); draw(); }
+      if (e.target.closest('[data-act="m-next"]')) { k = shiftMonth(k, 1); draw(); }
+      if (e.target.closest('[data-act="m-today"]')) { k = ym(today()); draw(); }
+      if (e.target.closest('[data-rep]')) chooseFormat(() => specAnalise(k));
+      if (e.target.closest('[data-meta]')) {
+        const v = await dialog({ title: 'Meta de economia mensal', message: 'Quanto você quer guardar por mês? (0 para nenhuma)', input: true, value: db.s.saveTarget ? String(db.s.saveTarget).replace('.', ',') : '', placeholder: '0,00', ok: 'Salvar' });
+        if (v == null) return;
+        db.setSettings({ saveTarget: (await import('./fmt.js')).parseMoney(v) });
+      }
+    },
+  });
+}
+
+// ======================================================================
+// Vale refeição / alimentação
+// ======================================================================
+function openVale() {
+  let k = ym(today());
+  simplePanel('vale', 'Vale Refeição / Alimentação', () => {
+    const w = st.vale;
+    const V = VALES[w];
+    const saldo = db.valeBalance(w);
+    const m = db.valeMonth(w, k);
+    const isCur = k === ym(today());
+    const dim = new Date(+k.slice(0, 4), +k.slice(5, 7), 0).getDate();
+    const dia = isCur ? +today().slice(8) : dim;
+    const restantes = isCur ? dim - dia + 1 : 0;
+    const porDia = restantes ? saldo / restantes : 0;
+    const media = dia ? m.spent / dia : 0;
+    const sobra = isCur ? saldo - media * (dim - dia) : null;
+    const futuros = db.valeTxs(w).filter((t) => t.type === 'income' && t.date > today());
+    const cats = db.byCategory(m.list.filter((t) => t.type === 'expense').map((t) => ({ ...t, kind: undefined })));
+    let last = '';
+    const rows = m.list.map((t) => {
+      const head = t.date !== last ? `<div class="day-head">${brDate(t.date)} · ${['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'][new Date(t.date + 'T12:00').getDay()]}</div>` : '';
+      last = t.date;
+      return head + txRow(t);
+    }).join('');
+    return `<div class="seg full two-seg"><button class="${w === 'vr' ? 'on' : ''}" data-w="vr">🍽️ Refeição</button><button class="${w === 'va' ? 'on' : ''}" data-w="va">🛒 Alimentação</button></div>
+      <div class="hero-card vale-hero"><span class="small">Saldo disponível no ${V.nome}</span><b class="hero-val">${money(saldo)}</b>
+        ${isCur ? `<span class="small">Dá para gastar <b>${money(Math.max(0, porDia))}</b> por dia até o fim do mês (${restantes} dia(s) contando hoje)</span>` : ''}
+        ${futuros.length ? `<span class="small">Próximo crédito: ${money(futuros[futuros.length - 1].amount)} em ${brDate(futuros[futuros.length - 1].date)}</span>` : ''}</div>
+      <div class="grid2"><button class="btn ok" data-novo="income">${icon('plus', 18)} Saldo recebido</button><button class="btn primary" data-novo="expense">${icon('down', 18)} Novo gasto</button></div>
+      ${monthBar(k)}
+      <div class="kpis">
+        <div class="kpi"><small>Recebido no mês</small><b class="income">${money(m.received)}</b></div>
+        <div class="kpi"><small>Gasto no mês</small><b class="expense">${money(m.spent)}</b></div>
+        <div class="kpi"><small>Média por dia</small><b>${money(media)}</b></div>
+      </div>
+      ${isCur && m.spent ? `<p class="an-alert ${sobra >= 0 ? 'bom' : 'ruim'}">${sobra >= 0 ? '✅' : '⚠️'} No ritmo atual (${money(media)}/dia) ${sobra >= 0 ? `sobram ${money(sobra)} no fim do mês.` : `o saldo acaba antes do fim do mês (faltariam ${money(-sobra)}).`}</p>` : ''}
+      ${cats.length ? `<section class="card-box"><h3>Gastos por categoria</h3>${donut(cats, m.spent, { center: money(m.spent) })}</section>` : ''}
+      <p class="muted small">Toque num item para ver os detalhes, editar (✏️) ou excluir (✖). Os valores do vale ficam separados do saldo das suas contas.</p>
+      <div class="tx-list">${rows || `<div class="empty">${V.icon}<p>Nada no ${V.nome} em ${monthLabel(k)}.<br>Comece registrando o saldo que você recebeu.</p></div>`}</div>`;
+  }, {
+    headBtns: `<button class="icon-btn" data-rep>${icon('pdf')}</button>`,
+    onClick: (e, draw) => {
+      const tx = e.target.closest('[data-tx]');
+      if (tx) return txDetail(tx.dataset.tx);
+      const w = e.target.closest('[data-w]');
+      if (w) { st.vale = w.dataset.w; draw(); }
+      const n = e.target.closest('[data-novo]');
+      if (n) valeForm({ wallet: st.vale, type: n.dataset.novo });
+      if (e.target.closest('[data-act="m-prev"]')) { k = shiftMonth(k, -1); draw(); }
+      if (e.target.closest('[data-act="m-next"]')) { k = shiftMonth(k, 1); draw(); }
+      if (e.target.closest('[data-act="m-today"]')) { k = ym(today()); draw(); }
+      if (e.target.closest('[data-rep]')) chooseFormat(() => specVale(k));
+    },
+  });
+}
+
+// ======================================================================
 // Relatórios (specs)
 // ======================================================================
 async function chooseFormat(specFn) {
@@ -685,12 +944,62 @@ async function chooseFormat(specFn) {
   await exportReport(specFn(), f);
 }
 function openReport(key) {
-  const map = { home: specHome, txs: specTxs, dues: specDues, cards: () => specCard(null), loans: () => specDebts(false), fin: () => specDebts(true), budgets: () => specBudgets(st.month), goals: specGoals, accounts: specAccounts, year: specYear };
+  const map = { home: specHome, txs: specTxs, dues: specDues, cards: () => specCard(null), loans: () => specDebts(false), fin: () => specDebts(true), budgets: () => specBudgets(st.month), goals: specGoals, accounts: specAccounts, year: specYear, analise: () => specAnalise(st.month), vale: () => specVale(st.month) };
   chooseFormat(map[key]);
 }
 const catName = (t) => (t.type === 'transfer' ? 'Transferência' : t.kind === 'invoice' ? 'Fatura de cartão' : db.cat(t.catId)?.name || '—');
 const whereName = (t) => (t.cardId && t.kind !== 'invoice' ? `Cartão ${db.card(t.cardId)?.name || ''}` : t.type === 'transfer' ? `${db.acc(t.accountId)?.name} → ${db.acc(t.toAccountId)?.name}` : db.acc(t.accountId)?.name || '');
 
+function specTipo(type, k) {
+  const list = db.monthTxs(k).filter((t) => t.type === type && db.isStat(t)).sort((a, b) => a.date.localeCompare(b.date));
+  const tot = list.reduce((s, t) => s + t.amount, 0);
+  const isExp = type === 'expense';
+  return {
+    title: isExp ? 'Despesas' : 'Receitas', subtitle: monthLabel(k), file: `${isExp ? 'despesas' : 'receitas'}-${k}`, landscape: true,
+    cards: [{ label: 'Total', value: tot, color: isExp ? 'red' : 'green' }, { label: isExp ? 'Pago' : 'Recebido', value: list.filter((t) => t.paid || t.cardId).reduce((s, t) => s + t.amount, 0) }, { label: 'Lançamentos', value: String(list.length), type: 'text' }],
+    sections: [
+      { title: isExp ? 'Despesas do mês' : 'Receitas do mês', columns: [{ h: 'Data', type: 'date' }, { h: 'Descrição' }, { h: 'Categoria' }, { h: 'Conta / Cartão' }, { h: 'Situação' }, { h: 'Valor', type: 'money' }],
+        rows: list.map((t) => [t.date, t.desc || catName(t), catName(t), whereName(t), t.cardId ? 'No cartão' : t.paid ? (isExp ? 'Pago' : 'Recebido') : 'Pendente', t.amount]), total: ['Total', '', '', '', '', tot] },
+      { title: 'Por categoria', columns: [{ h: 'Categoria' }, { h: 'Valor', type: 'money' }, { h: '%', type: 'pct' }], rows: db.byCategory(list, type).map((x) => [x.cat.name, x.v, tot ? x.v / tot : 0]), total: ['Total', tot, ''] },
+    ],
+  };
+}
+function specAnalise(k) {
+  const a = analyze(k);
+  return {
+    title: 'Análise do mês', subtitle: monthLabel(k), file: `analise-${k}`,
+    cards: [
+      { label: a.isCur ? 'Pode gastar por dia' : 'Resultado', value: a.isCur ? Math.max(0, a.porDia) : a.projecaoResultado, color: 'green' },
+      { label: 'Previsão de despesas', value: a.projecaoDespesas, color: 'red' },
+      { label: 'Previsão do resultado', value: a.projecaoResultado, color: a.projecaoResultado >= 0 ? 'green' : 'red' },
+      { label: 'Média por dia', value: a.mediaDia },
+    ],
+    sections: [
+      { title: 'Indicadores', columns: [{ h: 'Indicador' }, { h: 'Valor' }], rows: [
+        ['Receitas do mês', brl(a.receitas)], ['Despesas lançadas no mês', brl(a.despesas)], ['Gasto até hoje', brl(a.ateHoje)], ['Já agendado para os próximos dias', brl(a.agendado)],
+        ['Média por dia (tudo)', brl(a.mediaDia)], ['Média por dia (dia a dia)', brl(a.mediaVar)], ['Meta de economia', brl(a.meta)], ['Pode gastar por dia', brl(Math.max(0, a.porDia))],
+        ['Taxa de economia', a.taxaEconomia == null ? '—' : pct(a.taxaEconomia)], ['Vs. mesmo período do mês passado', a.varMes == null ? '—' : `${Math.round(a.varMes * 100)}%`],
+        ['Média de gastos (3 meses)', brl(a.media3)], ['Ainda a pagar no mês', brl(a.aPagar)], ['Ainda a receber no mês', brl(a.aReceber)],
+      ] },
+      { title: 'Alertas e dicas', columns: [{ h: 'Alerta' }], rows: a.alertas.map((x) => [x.m]) },
+      { title: 'Despesas por categoria', columns: [{ h: 'Categoria' }, { h: 'Valor', type: 'money' }, { h: '%', type: 'pct' }], rows: a.cats.map((x) => [x.cat.name, x.v, a.despesas ? x.v / a.despesas : 0]), total: ['Total', a.despesas, ''] },
+      { title: 'Maiores despesas', columns: [{ h: 'Data', type: 'date' }, { h: 'Descrição' }, { h: 'Categoria' }, { h: 'Valor', type: 'money' }], rows: a.maiores.map((t) => [t.date, t.desc || catName(t), catName(t), t.amount]) },
+    ],
+  };
+}
+function specVale(k) {
+  const secs = [];
+  const cards = [];
+  for (const w of ['vr', 'va']) {
+    if (!db.valeTxs(w).length) continue;
+    const m = db.valeMonth(w, k);
+    cards.push({ label: `Saldo ${VALES[w].nome}`, value: db.valeBalance(w), color: 'green' }, { label: `Gasto no mês (${VALES[w].nome.replace('Vale ', '')})`, value: m.spent, color: 'red' });
+    secs.push({ title: `${VALES[w].nome} — ${monthLabel(k)}`, columns: [{ h: 'Data', type: 'date' }, { h: 'Descrição' }, { h: 'Categoria' }, { h: 'Tipo' }, { h: 'Valor', type: 'money', color: true }],
+      rows: m.list.slice().reverse().map((t) => [t.date, t.desc || (t.type === 'income' ? 'Crédito' : catName(t)), t.type === 'income' ? '' : catName(t), t.type === 'income' ? 'Crédito' : 'Gasto', t.type === 'income' ? t.amount : -t.amount]),
+      total: ['Saldo do mês', '', '', '', r2(m.received - m.spent)] });
+  }
+  return { title: 'Vale refeição / alimentação', subtitle: monthLabel(k), file: `vale-${k}`, cards, sections: secs.length ? secs : [{ title: 'Sem lançamentos', columns: [{ h: '—' }], rows: [] }] };
+}
 function specHome() {
   const k = st.month, m = db.monthStats(k);
   const exp = db.byCategory(m.list, 'expense'), inc = db.byCategory(m.list, 'income');
@@ -836,7 +1145,9 @@ async function fab() {
     ...(db.d.cards.length ? [{ label: 'Compra no cartão', icon: 'card', value: 'card' }] : []),
     { label: 'Conta a pagar / boleto', icon: 'bill', value: 'bill' },
     { label: 'Transferência entre contas', icon: 'swap', value: 'transfer' },
+    { label: 'Gasto no vale refeição/alimentação', icon: 'wallet', value: 'vale' },
   ] });
+  if (v === 'vale') valeForm({ wallet: st.vale, type: 'expense' });
   if (v === 'expense' || v === 'income' || v === 'transfer') txForm({ type: v });
   if (v === 'card') txForm({ type: 'expense', card: true });
   if (v === 'bill') txForm({ type: 'expense', bill: true });
@@ -866,7 +1177,7 @@ async function dueDetail(d) {
 }
 
 function openMore(v) {
-  ({ loans: () => openDebts(false), fin: () => openDebts(true), budgets: openBudgets, goals: openGoals, accounts: openAccounts, categories: openCategories, reports: openReports, settings: openSettings })[v]?.();
+  ({ analise: () => openAnalysis(), vale: () => openVale(), loans: () => openDebts(false), fin: () => openDebts(true), budgets: openBudgets, goals: openGoals, accounts: openAccounts, categories: openCategories, reports: openReports, settings: openSettings })[v]?.();
 }
 
 $app.addEventListener('click', async (e) => {
@@ -874,7 +1185,7 @@ $app.addEventListener('click', async (e) => {
   if (!t) return;
   const d = t.dataset;
   if (d.tab) { st.tab = d.tab; window.scrollTo(0, 0); return render(); }
-  if (d.tx) return txForm({}, d.tx);
+  if (d.tx) return txDetail(d.tx);
   if (d.pay) { const x = findDue(d.pay); if (x) payDialog(x); return; }
   if (d.due) { const x = findDue(d.due); if (x) dueDetail(x); return; }
   if (d.card) return openCard(d.card);
@@ -892,6 +1203,8 @@ $app.addEventListener('click', async (e) => {
     case 'new-card': cardForm(); break;
     case 'card-buy': txForm({ type: 'expense', card: true }); break;
     case 'open': openMore(d.v); break;
+    case 'list-type': openTxType(d.v); break;
+    case 'analise': openAnalysis(); break;
     case 'sync': syncNow().then((ok) => toast(ok ? 'Sincronizado ✓' : 'Erro: ' + syncStatus.error)); break;
   }
 });

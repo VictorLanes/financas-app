@@ -19,6 +19,9 @@ Cada `push` na `main` gera um APK novo em **Releases**, que instala por cima do 
 ## Funcionalidades
 
 - **Início**: saldo atual, previsão para o fim do mês, receitas × despesas, contas vencidas, próximos vencimentos, gráfico por categoria, últimos 6 meses, orçamentos e cartões
+- **Análise do mês**: quanto dá para gastar por dia (e por semana) até o fim do mês, previsão de despesas e do resultado, saldo previsto, média diária, comparação com o mesmo período do mês passado, média dos últimos 3 meses, gráfico de gasto acumulado, maiores despesas, dia da semana em que mais gasta, alertas e meta de economia mensal
+- **Receitas e Despesas**: toque no card de Receitas ou Despesas para ver a lista do mês (com filtro por categoria). Tocar num item abre os detalhes, com ✏️ para editar e ✖ vermelho para excluir
+- **Vale Refeição / Alimentação**: saldo recebido no mês e gastos separados do saldo das contas, com saldo disponível, quanto gastar por dia, previsão, gastos por categoria e relatório
 - **Lançamentos**: despesas, receitas e transferências, com filtros por mês, tipo, pendentes, cartão e busca
   - Parcelado (divide o valor) ou repetir todo mês (mesmo valor)
   - Marcar como pago ou pendente, observação e código de barras/PIX para copiar depois

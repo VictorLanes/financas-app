@@ -514,3 +514,89 @@ export function budgetForm(catId) {
     p.close();
   });
 }
+
+// =====================================================================
+// Vale refeição / alimentação (crédito recebido ou gasto)
+// =====================================================================
+export const VALES = { vr: { nome: 'Vale Refeição', icon: '🍽️', cat: 'Alimentação' }, va: { nome: 'Vale Alimentação', icon: '🛒', cat: 'Mercado' } };
+
+export function valeForm(preset = {}, editId = null) {
+  const t = editId ? db.tx(editId) : null;
+  const wallet = t?.wallet || preset.wallet || 'vr';
+  const V = VALES[wallet];
+  let type = t?.type || preset.type || 'expense';
+  let catId = t?.catId || db.catByName('expense', V.cat)?.id || null;
+  const title = t ? (type === 'income' ? 'Editar crédito' : 'Editar gasto') : `${V.icon} ${V.nome}`;
+  const draw = () => `
+    ${!t ? `<div class="seg full two-seg type-seg">
+      <button type="button" class="${type === 'expense' ? 'on exp' : ''}" data-type="expense">Gasto</button>
+      <button type="button" class="${type === 'income' ? 'on inc' : ''}" data-type="income">Saldo recebido</button></div>` : ''}
+    ${moneyInput('amount', t?.amount ?? preset.amount, true)}
+    ${field('Descrição', `<input class="input" name="desc" value="${esc(t?.desc || '')}" placeholder="${type === 'income' ? 'Ex.: Crédito do mês' : 'Ex.: Almoço, padaria, mercado'}" autocomplete="off">`)}
+    ${type === 'expense' ? `<div class="fld"><span>Categoria</span>${catGrid('expense', catId)}</div>` : ''}
+    ${field(type === 'income' ? 'Data do crédito' : 'Data', `<input class="input" type="date" name="date" value="${t?.date || today()}">`)}
+    ${!t && type === 'income' ? `<div class="fld"><span>Repetir</span><div class="grid2">
+        <select class="input" name="mode"><option value="unico">Não repete</option><option value="fixo">Todo mês (mesmo valor)</option></select>
+        <div class="times"><input class="input" name="times" type="number" min="1" max="120" value="12" inputmode="numeric"><span>meses</span></div></div>
+        <small class="muted">Os créditos futuros só entram no saldo quando chegar a data.</small></div>` : ''}
+    ${field('Observação', `<textarea class="input" name="notes" rows="2">${esc(t?.notes || '')}</textarea>`)}
+    ${t ? `<button type="button" class="btn danger-ghost block" data-del>${icon('trash', 18)} Excluir</button>` : ''}`;
+
+  const p = panel(title, '<div class="dyn"></div>');
+  const form = p.el.querySelector('form');
+  const dyn = p.el.querySelector('.dyn');
+  const render = (vals) => {
+    dyn.innerHTML = draw();
+    if (vals) for (const k of ['amount', 'desc', 'date', 'notes']) if (form.elements[k] && vals[k] != null) form.elements[k].value = vals[k];
+  };
+  render();
+  bindCatGrid(dyn, (id) => (catId = id));
+  dyn.addEventListener('click', async (e) => {
+    const ty = e.target.closest('[data-type]');
+    if (ty) {
+      const v = Object.fromEntries(new FormData(form));
+      type = ty.dataset.type;
+      render(v);
+    }
+    if (e.target.closest('[data-del]')) {
+      if (await excluirLancamento(t)) p.close();
+    }
+  });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(form));
+    const amount = parseMoney(f.amount);
+    if (!(amount > 0)) return toast('Informe o valor');
+    if (!f.date) return toast('Informe a data');
+    const data = {
+      type, amount, date: f.date, desc: (f.desc || '').trim(), notes: f.notes || '', wallet,
+      catId: type === 'expense' ? catId : null, accountId: null, cardId: null, paid: true, paidDate: f.date,
+    };
+    if (t) {
+      let scope = 'one';
+      if (t.group) {
+        scope = await actionSheet({ title: 'Aplicar alteração em', items: [{ label: 'Só neste', value: 'one' }, { label: 'Neste e nos próximos', value: 'next' }] });
+        if (!scope) return;
+      }
+      db.updateTx(t.id, data, scope);
+      toast('Salvo');
+    } else {
+      const created = db.addTx(data, { mode: f.mode || 'unico', times: f.mode === 'fixo' ? f.times : 1 });
+      toast(created.length > 1 ? `${created.length} créditos programados` : type === 'income' ? 'Saldo registrado' : 'Gasto registrado');
+    }
+    p.close();
+  });
+}
+
+/** Exclui um lançamento perguntando o escopo se for de uma série. Retorna true se excluiu. */
+export async function excluirLancamento(t) {
+  if (!t) return false;
+  let scope = 'one';
+  if (t.group) {
+    scope = await actionSheet({ title: 'Excluir', items: [{ label: 'Só este', value: 'one' }, { label: 'Este e os próximos', value: 'next' }, { label: 'Todos da série', value: 'all', danger: true }] });
+    if (!scope) return false;
+  } else if (!(await confirmDialog('Excluir lançamento?', `${t.desc || ''} · ${brl(t.amount)}`, 'Excluir'))) return false;
+  db.deleteTx(t.id, scope);
+  toast('Excluído');
+  return true;
+}
