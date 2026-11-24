@@ -1,0 +1,71 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v5
+
+      - name: Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar app web e sincronizar com Android
+        run: |
+          npm run build
+          npx cap sync android
+
+      - name: Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Android SDK (plataforma 36)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Compilar APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+          mkdir -p ../dist
+          cp app/build/outputs/apk/release/app-release.apk ../dist/MinhasFinancas.apk
+          ls -la ../dist
+
+      - name: Guardar APK (artefato)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinhasFinancas-apk-${{ github.run_number }}
+          path: dist/MinhasFinancas.apk
+          retention-days: 30
+
+      - name: Publicar na página de Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: MinhasFinancas v1.0.${{ github.run_number }}
+          body: |
+            APK gerado automaticamente a partir do commit ${{ github.sha }}.
+
+            **Instalar:** baixe o `MinhasFinancas.apk` abaixo no celular e abra o arquivo.
+            A nova versão instala por cima da anterior sem perder os dados.
+          files: dist/MinhasFinancas.apk
+          make_latest: true

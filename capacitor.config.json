@@ -1,0 +1,9 @@
+{
+  "appId": "com.victorlanes.financas",
+  "appName": "Minhas Finanças",
+  "webDir": "www",
+  "plugins": {
+    "SystemBars": { "insetsHandling": "css" },
+    "LocalNotifications": { "smallIcon": "ic_stat_notify", "iconColor": "#7c3aed" }
+  }
+}

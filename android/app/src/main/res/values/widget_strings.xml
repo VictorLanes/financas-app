@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="w_balance_desc">Saldo atual e receitas/despesas do mês</string>
+    <string name="w_dues_desc">Boletos, faturas e parcelas que vão vencer</string>
+    <string name="w_quick_desc">Atalho para lançar uma despesa ou receita</string>
+</resources>
