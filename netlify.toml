@@ -1,0 +1,13 @@
+# Netlify: publica a versão para computador direto deste repositório
+[build]
+  command = "npm ci && npm run build:web"
+  publish = "dist-web"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "no-referrer"
