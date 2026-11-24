@@ -27,6 +27,7 @@ jobs:
       - name: Gerar app web e sincronizar com Android
         run: |
           npm run build
+          npm run build:web
           npx cap sync android
 
       - name: Java 21
@@ -54,7 +55,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MinhasFinancas-apk-${{ github.run_number }}
-          path: dist/MinhasFinancas.apk
+          path: |
+            dist/MinhasFinancas.apk
+            dist-web/index.html
           retention-days: 30
 
       - name: Publicar na página de Releases
@@ -65,7 +68,10 @@ jobs:
           body: |
             APK gerado automaticamente a partir do commit ${{ github.sha }}.
 
-            **Instalar:** baixe o `MinhasFinancas.apk` abaixo no celular e abra o arquivo.
+            **Celular:** baixe o `MinhasFinancas.apk` abaixo e abra o arquivo.
+            **Computador (site):** baixe o `index.html` e arraste para o Netlify (app.netlify.com/drop) ou atualize o site existente.
             A nova versão instala por cima da anterior sem perder os dados.
-          files: dist/MinhasFinancas.apk
+          files: |
+            dist/MinhasFinancas.apk
+            dist-web/index.html
           make_latest: true

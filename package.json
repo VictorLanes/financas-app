@@ -4,7 +4,8 @@
   "description": "Minhas Finanças — controle financeiro pessoal para Android",
   "scripts": {
     "build": "esbuild src/main.js --bundle --format=esm --target=chrome100 --minify --sourcemap --outfile=www/js/app.js",
-    "sync": "npm run build && cap sync android"
+    "sync": "npm run build && cap sync android",
+    "build:web": "node scripts/build-web.mjs"
   },
   "author": "",
   "license": "ISC",

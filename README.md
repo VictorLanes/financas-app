@@ -10,6 +10,12 @@ App Android de controle financeiro pessoal. Funciona offline e guarda tudo só n
 
 Cada `push` na `main` gera um APK novo em **Releases**, que instala por cima do anterior sem perder os dados.
 
+## 💻 Versão para computador + sincronização
+
+- O mesmo app roda no navegador: o arquivo `index.html` (anexado em cada Release, ou gerado com `npm run build:web` em `dist-web/`) é o site completo num arquivo só. Basta publicar no Netlify.
+- **Banco de dados grátis no Google Planilhas**: o script `google-apps-script/Code.gs` guarda os dados numa planilha sua. Celular e computador sincronizam com ela automaticamente (ao abrir, ao voltar para o app, após cada alteração e a cada minuto no computador). Funciona offline: as alterações são juntadas item por item quando a internet volta.
+- Configuração: veja as instruções no topo do `Code.gs`. Depois, em cada aparelho: **Mais > Ajustes > Conectar planilha do Google**. No segundo aparelho, use o código **MF1:** copiado do primeiro.
+
 ## Funcionalidades
 
 - **Início**: saldo atual, previsão para o fim do mês, receitas × despesas, contas vencidas, próximos vencimentos, gráfico por categoria, últimos 6 meses, orçamentos e cartões

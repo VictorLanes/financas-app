@@ -374,3 +374,39 @@ select.input {
 .keypad button { height: 68px; border-radius: 50%; font-size: 26px; font-weight: 600; background: rgba(255,255,255,.12); color: #fff; }
 .keypad button:active { background: rgba(255,255,255,.3); }
 .keypad .kp-ghost { background: transparent; font-size: 15px; }
+
+/* ---------- Sincronização ---------- */
+.info-box { background: var(--surface); border: 1.5px dashed var(--primary); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.sync-btn { font-size: 18px; }
+.sync-btn.syncing { animation: spin 1.2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.connect-err:empty { display: none; }
+
+/* ---------- Versão desktop (computador / tablet deitado) ---------- */
+@media (min-width: 900px) {
+  :root { --nav-w: 232px; }
+  body { background: var(--bg); }
+  .screen { max-width: 880px; margin: 0 auto; padding: 24px 32px 120px calc(var(--nav-w) + 32px); }
+  @media (min-width: 1360px) { .screen { margin-left: calc(var(--nav-w) + (100vw - var(--nav-w) - 880px) / 2); padding-left: 32px; } }
+  .bottom-nav { top: 0; bottom: 0; right: auto; width: var(--nav-w); height: auto; flex-direction: column; justify-content: flex-start; gap: 4px;
+    padding: 24px 12px; border-top: 0; border-right: 1px solid var(--border); }
+  .bottom-nav::before { content: '💜 Minhas Finanças'; font-weight: 800; font-size: 17px; padding: 4px 12px 20px; color: var(--text); }
+  .nav-btn { flex: 0 0 auto; flex-direction: row; justify-content: flex-start; gap: 12px; padding: 12px 14px; border-radius: 12px; font-size: 15px; }
+  .nav-btn span:last-child { font-size: 15px !important; }
+  .nav-btn.on { background: color-mix(in srgb, var(--primary) 14%, transparent); }
+  .nav-btn .badge { position: static; margin-left: auto; order: 3; }
+  .fab { right: 36px; bottom: 36px; width: 62px; height: 62px; }
+  .top h1 { font-size: 28px; }
+  .kpi b { font-size: 18px; }
+  .hero-val { font-size: 36px; }
+  .board-grid, .grid-desk { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .cc { max-width: 460px; }
+  /* painéis abrem como gaveta à direita */
+  .panel-wrap { left: auto; width: 560px; box-shadow: -10px 0 40px rgba(0,0,0,.25); }
+  .overlay.sheet-wrap .sheet { left: 50%; right: auto; width: 480px; transform: translate(-50%, 100%); bottom: 24px; border-radius: 18px; }
+  .overlay.sheet-wrap.show .sheet { transform: translate(-50%, 0); }
+  .toast { left: auto; right: 32px; width: 420px; bottom: 32px; }
+  .cat-grid { grid-template-columns: repeat(4, 1fr); }
+  .tx-row:hover, .menu-item:hover, .set-btn:hover, .debt-card:hover { filter: brightness(.97); cursor: pointer; }
+  [data-theme='dark'] .tx-row:hover { filter: brightness(1.15); }
+}

@@ -20,36 +20,48 @@ function seed() {
   return {
     version: 1,
     accounts: [
-      { id: uid(), name: 'Conta corrente', type: 'corrente', initial: 0, color: '#7c3aed', icon: '🏦' },
-      { id: uid(), name: 'Carteira', type: 'dinheiro', initial: 0, color: '#16a34a', icon: '👛' },
+      // ids fixos: assim os itens padrão são os mesmos em todos os aparelhos
+      { id: 'acc-corrente', name: 'Conta corrente', type: 'corrente', initial: 0, color: '#7c3aed', icon: '🏦' },
+      { id: 'acc-carteira', name: 'Carteira', type: 'dinheiro', initial: 0, color: '#16a34a', icon: '👛' },
     ],
     categories: [
-      ...EXP.map(([name, icon, color]) => ({ id: uid(), type: 'expense', name, icon, color })),
-      ...INC.map(([name, icon, color]) => ({ id: uid(), type: 'income', name, icon, color })),
+      ...EXP.map(([name, icon, color], i) => ({ id: 'ce' + i, type: 'expense', name, icon, color })),
+      ...INC.map(([name, icon, color], i) => ({ id: 'ci' + i, type: 'income', name, icon, color })),
     ],
     txs: [],
     cards: [],
     debts: [],
     budgets: {},
+    budgetsU: 0,
     goals: [],
+    deleted: {}, // id -> quando foi apagado (para a sincronização)
+    meta: { touched: false },
     settings: { theme: 'system', reminderDays: 1, reminderHour: 9, hideValues: false, widgetHide: false, pin: null },
   };
 }
+
+export const SYNC_COLLS = ['accounts', 'categories', 'txs', 'cards', 'debts', 'goals'];
 
 class DB {
   constructor() {
     this.d = seed();
     this.listeners = new Set();
+    this.localListeners = new Set();
+    this.snap = new Map();
+    this.snapBudgets = '';
   }
   async load() {
     const saved = await getJSON('fin_data', null);
     if (saved) {
       const base = seed();
       this.d = { ...base, ...saved, settings: { ...base.settings, ...(saved.settings || {}) } };
+      // dados de antes da sincronização: se já tem algo, conta como "usado"
+      if (!saved.meta) this.d.meta = { touched: !!(saved.txs?.length || saved.cards?.length || saved.debts?.length || saved.goals?.length) };
     } else {
       this.d = seed();
       await this.save();
     }
+    this.rebuildSnap();
   }
   async save() {
     await setJSON('fin_data', this.d);
@@ -58,8 +70,73 @@ class DB {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
+  /** só alterações feitas neste aparelho (para disparar a sincronização) */
+  onLocal(fn) {
+    this.localListeners.add(fn);
+  }
+  // ---- controle de alterações por item (usado na sincronização) ----
+  rebuildSnap() {
+    this.snap.clear();
+    for (const c of SYNC_COLLS) for (const it of this.d[c] || []) {
+      const { u, ...rest } = it;
+      this.snap.set(c + ':' + it.id, JSON.stringify(rest));
+    }
+    this.snapBudgets = JSON.stringify(this.d.budgets || {});
+  }
+  stamp() {
+    const now = Date.now();
+    const seen = new Set();
+    let changed = false;
+    this.d.deleted = this.d.deleted || {};
+    for (const c of SYNC_COLLS) for (const it of this.d[c] || []) {
+      const k = c + ':' + it.id;
+      seen.add(k);
+      const { u, ...rest } = it;
+      const s = JSON.stringify(rest);
+      if (this.snap.get(k) !== s) {
+        it.u = now;
+        this.snap.set(k, s);
+        changed = true;
+      }
+    }
+    for (const k of [...this.snap.keys()]) if (!seen.has(k)) {
+      this.d.deleted[k.slice(k.indexOf(':') + 1)] = now;
+      this.snap.delete(k);
+      changed = true;
+    }
+    const b = JSON.stringify(this.d.budgets || {});
+    if (b !== this.snapBudgets) {
+      this.d.budgetsU = now;
+      this.snapBudgets = b;
+      changed = true;
+    }
+    return changed;
+  }
   commit() {
+    const changed = this.stamp();
+    if (changed) this.d.meta = { ...(this.d.meta || {}), touched: true };
     this.save();
+    this.listeners.forEach((fn) => fn());
+    if (changed) this.localListeners.forEach((fn) => fn());
+  }
+  /** parte dos dados que vai para a planilha */
+  syncDoc() {
+    const o = { budgets: this.d.budgets, budgetsU: this.d.budgetsU || 0, deleted: this.d.deleted || {} };
+    for (const c of SYNC_COLLS) o[c] = this.d[c];
+    return o;
+  }
+  get pristine() {
+    return !this.d.meta?.touched;
+  }
+  /** aplica os dados vindos da planilha (sem disparar nova sincronização) */
+  async applySync(doc) {
+    for (const c of SYNC_COLLS) this.d[c] = doc[c] || [];
+    this.d.budgets = doc.budgets || {};
+    this.d.budgetsU = doc.budgetsU || 0;
+    this.d.deleted = doc.deleted || {};
+    this.d.meta = { ...(this.d.meta || {}), touched: true };
+    this.rebuildSnap();
+    await this.save();
     this.listeners.forEach((fn) => fn());
   }
   get s() {
@@ -515,14 +592,19 @@ class DB {
     const j = JSON.parse(text);
     const d = j.data || j;
     if (!Array.isArray(d.txs) || !Array.isArray(d.accounts)) throw new Error('Arquivo de backup inválido.');
-    const pin = this.d.settings.pin;
-    this.d = { ...seed(), ...d, settings: { ...seed().settings, ...(d.settings || {}), pin } };
+    const keep = this.d.settings, del = this.d.deleted || {};
+    this.d = { ...seed(), ...d, settings: { ...seed().settings, ...(d.settings || {}), pin: keep.pin, sync: keep.sync, theme: keep.theme } };
+    this.d.deleted = { ...(d.deleted || {}), ...del };
+    for (const c of SYNC_COLLS) for (const it of this.d[c]) delete this.d.deleted[it.id];
     this.commit();
   }
   reset() {
-    const pin = this.d.settings.pin;
+    const keep = this.d.settings, del = this.d.deleted || {};
     this.d = seed();
-    this.d.settings.pin = pin;
+    this.d.settings = keep;
+    this.d.deleted = del;
+    // itens padrão voltam a valer mesmo se tinham sido apagados antes
+    for (const c of SYNC_COLLS) for (const it of this.d[c]) delete this.d.deleted[it.id];
     this.commit();
   }
 }

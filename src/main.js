@@ -9,6 +9,7 @@ import {
 import { donut, bars, progress } from './charts.js';
 import { txForm, payDialog, cardForm, debtForm, accountForm, categoryForm, goalForm, goalMoveForm, budgetForm } from './forms.js';
 import { exportReport, saveFile } from './report.js';
+import { configured, syncNow, scheduleSync, status as syncStatus, onStatus, testConnection, configCode, parseConfigCode, randomKey } from './sync.js';
 import { native, initNative, afterChange, notifStatus, askNotif, testNotif, exactAlarmSettings, setupPin, checkLock, lockNow } from './native.js';
 
 const $app = document.getElementById('app');
@@ -71,6 +72,85 @@ function dueRow(d, withBtn = true) {
   </div>`;
 }
 
+// ---------------------------- Sincronização ---------------------------
+function syncChip() {
+  if (!configured()) return '';
+  const st2 = syncStatus.state;
+  const ic = st2 === 'syncing' ? '🔄' : st2 === 'error' ? '⚠️' : '☁️';
+  const tip = st2 === 'error' ? 'Erro ao sincronizar' : st2 === 'syncing' ? 'Sincronizando' : 'Sincronizado';
+  return `<button class="icon-btn sync-btn ${st2}" data-act="sync" title="${tip}" aria-label="${tip}">${ic}</button>`;
+}
+onStatus(() => {
+  document.querySelectorAll('.sync-chip').forEach((el) => (el.innerHTML = syncChip()));
+  document.querySelectorAll('[data-sync-status]').forEach((el) => (el.innerHTML = syncStatusText()));
+});
+function syncStatusText() {
+  const c = db.s.sync || {};
+  if (syncStatus.state === 'syncing') return '<span class="muted">🔄 Sincronizando...</span>';
+  if (syncStatus.state === 'error') return `<span class="expense">⚠️ ${esc(syncStatus.error)}</span>`;
+  const last = syncStatus.last || c.last;
+  return last ? `<span class="income">✓ Sincronizado</span> <span class="muted small">às ${new Date(last).toLocaleTimeString('pt-BR').slice(0, 5)} de ${new Date(last).toLocaleDateString('pt-BR')}</span>` : '<span class="muted">Ainda não sincronizado</span>';
+}
+
+function connectPanel(onDone) {
+  const p = fullPanel('form-panel connect-panel');
+  const key = db.s.sync?.key || randomKey();
+  p.el.innerHTML = `<div class="panel">
+    <header class="panel-head"><button class="icon-btn" data-x>${icon('close')}</button><h2 class="grow">Conectar planilha</h2></header>
+    <form class="panel-body form">
+      <div class="info-box"><b>Já conectou em outro aparelho?</b><br><span class="small">Cole aqui o código que aparece lá (começa com <b>MF1:</b>). Ele já traz o link e a chave.</span>
+        <textarea class="input" name="code" rows="2" placeholder="MF1:..."></textarea></div>
+      <p class="center muted small">— ou preencha manualmente —</p>
+      <label class="fld"><span>Link do App da Web (termina em /exec)</span><input class="input" name="url" value="${esc(db.s.sync?.url || '')}" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off"></label>
+      <label class="fld"><span>Chave de sincronização</span><input class="input" name="key" value="${esc(key)}" autocomplete="off"></label>
+      <p class="muted small">A chave protege seus dados. Na primeira conexão ela fica registrada na planilha. Use a mesma chave em todos os aparelhos (o código MF1 já leva ela).</p>
+      <div class="connect-err expense small"></div>
+      <button class="btn primary block big-btn" type="submit">Conectar</button>
+    </form></div>`;
+  p.el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-x]')) p.close();
+  });
+  const form = p.el.querySelector('form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(form));
+    const err = p.el.querySelector('.connect-err');
+    err.textContent = '';
+    let url = f.url.trim(), k = f.key.trim();
+    try {
+      if (f.code.trim()) ({ url, key: k } = parseConfigCode(f.code));
+      if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(url)) throw new Error('O link precisa ser do Google Apps Script (script.google.com/.../exec).');
+      if (k.length < 8) throw new Error('A chave precisa ter pelo menos 8 caracteres.');
+      const btn = form.querySelector('[type=submit]');
+      btn.disabled = true;
+      btn.textContent = 'Conectando...';
+      try {
+        const r = await testConnection(url, k);
+        db.d.settings.sync = { url, key: k, enabled: true, sheet: r.sheet, sheetUrl: r.url };
+        await db.save();
+        p.close();
+        toast(r.hasData ? 'Conectado! Baixando os dados da planilha...' : 'Conectado! Enviando seus dados para a planilha...');
+        await syncNow();
+        onDone?.();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Conectar';
+      }
+    } catch (ex) {
+      err.textContent = ex.message;
+    }
+  });
+}
+
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMsg);
+  } catch {
+    dialog({ title: 'Copie o código', input: true, value: text, multiline: true, ok: 'Fechar', cancel: null });
+  }
+}
+
 // ---------------------------- Início ----------------------------------
 function viewHome() {
   const k = st.month;
@@ -83,7 +163,7 @@ function viewHome() {
   const h = new Date().getHours();
   return `
   <header class="top"><div><div class="muted small">${h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'} 👋</div><h1>Minhas Finanças</h1></div>
-    <div class="row">${eyeBtn()}${reportBtn('home')}</div></header>
+    <div class="row"><span class="sync-chip">${syncChip()}</span>${eyeBtn()}${reportBtn('home')}</div></header>
   <div class="hero-card">
     <span class="small">Saldo atual</span>
     <b class="hero-val">${money(total)}</b>
@@ -506,7 +586,18 @@ async function openSettings() {
   const P = await notifStatus();
   simplePanel('settings', 'Ajustes', () => {
     const s = db.s;
+    const sc = s.sync || {};
     return `
+    <h2 class="section">Sincronização (Google Planilhas)</h2>
+    ${configured() ? `
+      <div class="set-row"><span class="grow" data-sync-status>${syncStatusText()}</span></div>
+      ${sc.sheet ? `<div class="set-row small"><span class="grow muted">Planilha: <b>${esc(sc.sheet)}</b></span>${sc.sheetUrl ? `<a class="link small" href="${esc(sc.sheetUrl)}" target="_blank" rel="noopener">abrir</a>` : ''}</div>` : ''}
+      <button class="set-btn" data-s="sync-now">🔄 Sincronizar agora</button>
+      <button class="set-btn" data-s="sync-code">📋 Copiar código para outro aparelho</button>
+      <button class="set-btn danger" data-s="sync-off">Desconectar deste aparelho</button>`
+    : `<p class="muted small">Conecte uma planilha do Google para usar o app no celular e no computador ao mesmo tempo, com os mesmos dados. É grátis.</p>
+      <button class="set-btn" data-s="sync-connect">☁️ Conectar planilha do Google</button>`}
+
     <h2 class="section">Notificações de vencimento</h2>
     <div class="set-row"><span class="grow">Status</span><b class="${P.ok ? 'income' : 'expense'}">${P.label}</b></div>
     <div class="set-row"><span class="grow">Avisar</span><select class="input auto" data-set="reminderDays">${[[0, 'só no dia'], [1, '1 dia antes e no dia'], [2, '2 dias antes e no dia'], [3, '3 dias antes e no dia'], [5, '5 dias antes e no dia']].map(([v, l]) => `<option value="${v}" ${+s.reminderDays === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
@@ -536,6 +627,16 @@ async function openSettings() {
       const b = e.target.closest('[data-s]');
       if (!b) return;
       switch (b.dataset.s) {
+        case 'sync-connect': connectPanel(draw); break;
+        case 'sync-now': (await syncNow()) ? toast('Sincronizado ✓') : toast('Não foi possível sincronizar'); break;
+        case 'sync-code': copyText(configCode(), 'Código copiado! Cole no outro aparelho em Ajustes > Conectar planilha.'); break;
+        case 'sync-off':
+          if (await confirmDialog('Desconectar?', 'Os dados continuam neste aparelho e na planilha, mas param de sincronizar aqui.', 'Desconectar', false)) {
+            db.d.settings.sync = { ...(db.s.sync || {}), enabled: false, url: '', key: '' };
+            await db.save();
+            draw();
+          }
+          break;
         case 'notif': await askNotif(); toast('Pronto'); break;
         case 'exact': await exactAlarmSettings(); break;
         case 'test': (await testNotif()) ? toast('A notificação chega em 3 segundos') : toast('Disponível no app instalado'); break;
@@ -546,7 +647,7 @@ async function openSettings() {
           break;
         }
         case 'reset':
-          if (await confirmDialog('Apagar tudo?', 'Todos os lançamentos, cartões, empréstimos e metas serão apagados. Faça um backup antes.', 'Apagar tudo')) {
+          if (await confirmDialog('Apagar tudo?', 'Todos os lançamentos, cartões, empréstimos e metas serão apagados' + (configured() ? ' em TODOS os aparelhos sincronizados e na planilha' : '') + '. Faça um backup antes.', 'Apagar tudo')) {
             db.reset();
             toast('Dados apagados');
           }
@@ -791,6 +892,7 @@ $app.addEventListener('click', async (e) => {
     case 'new-card': cardForm(); break;
     case 'card-buy': txForm({ type: 'expense', card: true }); break;
     case 'open': openMore(d.v); break;
+    case 'sync': syncNow().then((ok) => toast(ok ? 'Sincronizado ✓' : 'Erro: ' + syncStatus.error)); break;
   }
 });
 $app.addEventListener('input', (e) => {
@@ -826,6 +928,7 @@ db.on(() => {
   render();
   afterChange();
 });
+db.onLocal(() => scheduleSync());
 
 (async function init() {
   await db.load();
@@ -835,6 +938,14 @@ db.on(() => {
   initNative(handleLink);
   afterChange();
   if (!native) window.__db = db; // testes no navegador
+  if (configured()) syncNow();
+  // sincroniza ao voltar para o app/aba e, no computador, a cada minuto
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncNow();
+  });
+  setInterval(() => {
+    if (document.visibilityState === 'visible') syncNow();
+  }, 60000);
 })();
 
 export { lockNow };
