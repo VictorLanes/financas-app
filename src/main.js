@@ -11,7 +11,8 @@ import { txForm, payDialog, cardForm, debtForm, accountForm, categoryForm, goalF
 import { analyze, chartAcumulado } from './analysis.js';
 import { exportReport, saveFile } from './report.js';
 import { configured, syncNow, scheduleSync, status as syncStatus, onStatus, testConnection, configCode, parseConfigCode, randomKey } from './sync.js';
-import { native, initNative, afterChange, notifStatus, askNotif, testNotif, exactAlarmSettings, setupPin, checkLock, lockNow } from './native.js';
+import { native, initNative, afterChange, notifStatus, askNotif, testNotif, exactAlarmSettings } from './native.js';
+import { setupLock, checkLock, lockNow, lockEnabled, lockLabel, showShade, onResume } from './lock.js';
 
 const $app = document.getElementById('app');
 const st = { tab: 'home', month: ym(today()), txFilter: 'all', txQ: '', dueSide: 'pagar', vale: 'vr' };
@@ -642,7 +643,12 @@ async function openSettings() {
     <h2 class="section">Privacidade</h2>
     <label class="switch-row"><span>Ocultar valores ao abrir</span><input type="checkbox" data-set="hideValues" ${s.hideValues ? 'checked' : ''}></label>
     <label class="switch-row"><span>Ocultar valores nos widgets</span><input type="checkbox" data-set="widgetHide" ${s.widgetHide ? 'checked' : ''}></label>
-    <button class="set-btn" data-s="pin">${icon('lock', 18)} ${s.pin ? 'Alterar ou remover PIN' : 'Proteger o app com PIN'}</button>
+
+    <h2 class="section">Bloqueio do app</h2>
+    <div class="set-row"><span class="grow">Desbloquear com</span><b class="${lockEnabled() ? 'income' : 'muted'}">${lockLabel()}</b></div>
+    <button class="set-btn" data-s="pin">${icon('lock', 18)} ${lockEnabled() ? 'Alterar ou desativar o bloqueio' : 'Ativar bloqueio com PIN ou desenho'}</button>
+    ${lockEnabled() ? `<div class="set-row"><span class="grow">Bloquear depois de sair do app</span><select class="input auto" data-set="lockAfter">${[[0, 'na hora'], [30, 'em 30 segundos'], [60, 'em 1 minuto'], [300, 'em 5 minutos']].map(([v, l]) => `<option value="${v}" ${(s.lockAfter ?? 30) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <button class="set-btn" data-s="lock-now">${icon('lock', 18)} Bloquear agora</button>` : ''}
 
     <h2 class="section">Aparência</h2>
     <div class="seg full">${[['system', 'Automático'], ['light', 'Claro'], ['dark', 'Escuro']].map(([v, l]) => `<button class="${s.theme === v ? 'on' : ''}" data-theme="${v}">${l}</button>`).join('')}</div>
@@ -673,7 +679,8 @@ async function openSettings() {
         case 'notif': await askNotif(); toast('Pronto'); break;
         case 'exact': await exactAlarmSettings(); break;
         case 'test': (await testNotif()) ? toast('A notificação chega em 3 segundos') : toast('Disponível no app instalado'); break;
-        case 'pin': await setupPin(); draw(); break;
+        case 'pin': await setupLock(); draw(); break;
+        case 'lock-now': lockNow(); break;
         case 'export': {
           const bytes = new TextEncoder().encode(db.exportJSON());
           await saveFile(bytes, `backup-financas-${today()}.json`, 'application/json');
@@ -1246,15 +1253,23 @@ db.onLocal(() => scheduleSync());
 (async function init() {
   await db.load();
   applyTheme();
+  // a tela de bloqueio entra antes do conteúdo (nada aparece por trás)
+  const bloqueio = checkLock();
   render();
-  await checkLock();
+  await bloqueio;
   initNative(handleLink);
   afterChange();
   if (!native) window.__db = db; // testes no navegador
   if (configured()) syncNow();
   // sincroniza ao voltar para o app/aba e, no computador, a cada minuto
+  let saiuEm = 0;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') syncNow();
+    // no computador/navegador, bloqueia ao voltar para a aba (no app isso é feito em native.js)
+    if (!native) {
+      if (document.visibilityState === 'hidden') { saiuEm = Date.now(); showShade(); }
+      else onResume(Date.now() - saiuEm);
+    }
   });
   setInterval(() => {
     if (document.visibilityState === 'visible') syncNow();

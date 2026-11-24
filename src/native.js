@@ -5,6 +5,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { db } from './db.js';
 import { brl, today, ym, monthLabel, addDays, parseD, esc } from './fmt.js';
 import { toast, actionSheet } from './ui.js';
+import { showShade, onResume } from './lock.js';
 
 export const native = Capacitor.isNativePlatform();
 const WidgetBridge = registerPlugin('WidgetBridge');
@@ -32,10 +33,11 @@ export async function initNative(onLink) {
     App.addListener('appStateChange', ({ isActive }) => {
       if (!isActive) {
         hiddenAt = Date.now();
+        showShade();
         writeWidget();
         return;
       }
-      if (db.s.pin && Date.now() - hiddenAt > 30000) lockNow();
+      onResume(Date.now() - hiddenAt);
     });
   }
 }
@@ -139,81 +141,3 @@ export function afterChange() {
   }, 700);
 }
 
-// ======================================================================
-// PIN
-// ======================================================================
-async function hashPin(pin, salt) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + ':' + pin));
-  return btoa(String.fromCharCode(...new Uint8Array(buf)));
-}
-
-function pinPad({ title, sub = '', cancel = true, check = null }) {
-  return new Promise((resolve) => {
-    const el = document.createElement('div');
-    el.className = 'lock';
-    let v = '';
-    const draw = (msg = sub, err = false) => {
-      el.innerHTML = `<div class="lock-box"><div class="lock-logo">💜</div><h2>${esc(title)}</h2><p class="${err ? 'expense' : 'muted'} small">${esc(msg)}</p>
-        <div class="pin-dots">${[0, 1, 2, 3].map((i) => `<i class="${i < v.length ? 'on' : ''}"></i>`).join('')}</div>
-        <div class="keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-k="${n}">${n}</button>`).join('')}
-          <button data-k="c" class="kp-ghost">${cancel ? 'Cancelar' : ''}</button><button data-k="0">0</button><button data-k="b" class="kp-ghost">⌫</button></div></div>`;
-    };
-    draw();
-    document.body.appendChild(el);
-    el.addEventListener('click', async (e) => {
-      const b = e.target.closest('[data-k]');
-      if (!b) return;
-      const k = b.dataset.k;
-      if (k === 'c') {
-        if (!cancel) return;
-        el.remove();
-        return resolve(null);
-      }
-      if (k === 'b') v = v.slice(0, -1);
-      else if (v.length < 4) v += k;
-      draw();
-      if (v.length === 4) {
-        if (check && !(await check(v))) {
-          v = '';
-          if (navigator.vibrate) navigator.vibrate(200);
-          return draw('PIN incorreto', true);
-        }
-        el.remove();
-        resolve(v);
-      }
-    });
-  });
-}
-
-let locked = false;
-export async function lockNow() {
-  if (locked || !db.s.pin) return;
-  locked = true;
-  const { salt, hash } = db.s.pin;
-  await pinPad({ title: 'Minhas Finanças', sub: 'Digite seu PIN', cancel: false, check: async (p) => (await hashPin(p, salt)) === hash });
-  locked = false;
-}
-export async function checkLock() {
-  if (db.s.pin) await lockNow();
-}
-export async function setupPin() {
-  if (db.s.pin) {
-    const v = await actionSheet({ items: [{ label: 'Alterar PIN', value: 'change' }, { label: 'Remover PIN', value: 'remove', danger: true }] });
-    if (!v) return;
-    const { salt, hash } = db.s.pin;
-    const ok = await pinPad({ title: 'PIN atual', check: async (p) => (await hashPin(p, salt)) === hash });
-    if (!ok) return;
-    if (v === 'remove') {
-      db.setSettings({ pin: null });
-      return toast('PIN removido');
-    }
-  }
-  const p1 = await pinPad({ title: 'Novo PIN', sub: 'Escolha 4 números' });
-  if (!p1) return;
-  const p2 = await pinPad({ title: 'Confirme o PIN', sub: 'Digite de novo' });
-  if (!p2) return;
-  if (p1 !== p2) return toast('Os PINs não conferem');
-  const salt = Math.random().toString(36).slice(2);
-  db.setSettings({ pin: { salt, hash: await hashPin(p1, salt) } });
-  toast('PIN ativado ✓ O app pede o PIN ao abrir.');
-}

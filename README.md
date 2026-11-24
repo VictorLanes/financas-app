@@ -36,7 +36,7 @@ Cada `push` na `main` gera um APK novo em **Releases**, que instala por cima do 
 - **Relatórios em PDF e Excel** de cada aba: resumo do mês, extrato, resumo do ano, contas, cartões, empréstimos, financiamentos, orçamentos, metas e saldos. O Excel vem formatado com tabelas, totais e valores em R$.
 - **Notificações de vencimento**: X dias antes e no dia, no horário escolhido, agrupando as contas do mesmo dia
 - **Widgets**: *Saldo* (saldo + receitas/despesas do mês), *Próximos vencimentos* (lista) e *Lançar rápido* (1×1)
-- **PIN** para abrir o app, ocultar valores (no app e nos widgets), tema claro/escuro, backup e restauração
+- **Tela de bloqueio** com PIN (4 ou 6 dígitos) ou desenho, relógio, resposta imediata ao toque e bloqueio configurável ao sair do app;, ocultar valores (no app e nos widgets), tema claro/escuro, backup e restauração
 
 ## Tecnologia
 
